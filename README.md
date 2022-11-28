@@ -3,7 +3,7 @@ Workerman is an asynchronous event-driven PHP framework with high performance to
 Workerman supports HTTP, Websocket, SSL and other custom protocols. 
 Workerman supports event extension.
 
-> ### :warning: This is just modified version that I made for learning purposes.
+> ### :warning: This is just a modified version that I made for learning purposes.
 > ### Please use the [official workerman library](https://github.com/walkor/workerman).
 
 ## Installation
