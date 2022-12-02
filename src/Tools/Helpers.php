@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Rexpl\Workerman\Tools;
 
+use DateTime;
 use Rexpl\Workerman\Exceptions\WorkermanException;
 use Workerman\Events\EventInterface;
 
@@ -40,16 +41,6 @@ class Helpers
         SIGUSR1, // Reload
         SIGUSR2, // Gracefull reload
         SIGIOT, // Status
-    ];
-
-
-    /**
-     * @var array
-     */
-    public const EVENT_SIGNALS = [
-        SIGHUP,
-        SIGQUIT,
-        SIGIOT,
     ];
 
 
@@ -174,9 +165,32 @@ class Helpers
      */
     public static function eventSignalHandler(EventInterface $eventLoop, object $class, string $method): void
     {
-        foreach (self::EVENT_SIGNALS as $signal) {
+        foreach (self::SIGNALS as $signal) {
             
             $eventLoop->add($signal, EventInterface::EV_SIGNAL, [$class, $method]);
         }
+    }
+
+
+    /**
+     * Calculates the uptime.
+     * 
+     * Return a format like "42d 3h 34min".
+     * 
+     * @param int $start The start time.
+     * 
+     * @return string
+     */
+    public static function uptime(int $start): string
+    {
+        $total = time() - $start;
+
+        $leftovers = $total - ($days = floor($total / 86400)) * 86400;
+        $leftovers = $leftovers - ($hours = floor($leftovers / 3600)) * 3600;
+        $minutes = floor($leftovers / 60);
+
+        return sprintf(
+            '%dd %dh %dmin', $days, $hours, $minutes
+        );
     }
 }

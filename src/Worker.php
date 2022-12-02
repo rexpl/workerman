@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Rexpl\Workerman;
 
+use Rexpl\Workerman\Tools\Files;
 use Rexpl\Workerman\Tools\Helpers;
-use Rexpl\Workerman\Tools\Output;
+use Rexpl\Workerman\Tools\OutputHelper;
 use Workerman\Worker as WorkermanWorker;
 use Workerman\Connection\TcpConnection;
 use Workerman\Events\EventInterface;
@@ -13,6 +14,25 @@ use Workerman\Timer;
 
 class Worker
 {
+    use OutputHelper;
+
+
+    /**
+     * Worker start time.
+     * 
+     * @var int
+     */
+    protected int $startTime;
+
+
+    /**
+     * Start count.
+     * 
+     * @var int
+     */
+    protected int $restartCount = 0;
+
+
     /**
      * Socket.
      * 
@@ -27,6 +47,14 @@ class Worker
      * @var int
      */
     public readonly int $id;
+
+
+    /**
+     * Worker unique hash.
+     * 
+     * @var string
+     */
+    public readonly string $hash;
 
 
     /**
@@ -54,6 +82,14 @@ class Worker
 
 
     /**
+     * Is a daemon process.
+     * 
+     * @var bool
+     */
+    protected bool $daemon;
+
+
+    /**
      * @param Socket $socket
      * @param int $id
      * 
@@ -63,7 +99,21 @@ class Worker
     {
         $this->socket = $socket;
         $this->id = $id;
+        $this->hash = spl_object_hash($this);
         $this->eventLoop = $socket->getEventLoop();
+
+        $this->prefix = sprintf('Worker (%d): ', $id);
+    }
+
+
+    /**
+     * Notify the worker that it crashed unexpectedly. This is for stats.
+     * 
+     * @return void
+     */
+    public function unexpectedCrash(): void
+    {
+        $this->restartCount++;
     }
 
 
@@ -76,10 +126,12 @@ class Worker
      */
     public function start(bool $daemon): void
     {
-        Output::debug(sprintf(
-            'Worker (%d): listen: %s name: %s',
-            $this->id, $this->socket->getAddress(), $this->socket->getName()
-        ));
+        $this->startTime = time();
+        $this->daemon = $daemon;
+
+        $this->debug('listen: %s name: %s', [$this->socket->getAddress(), $this->socket->getName()]);
+
+        register_shutdown_function([$this, 'shutdown']);
 
         Timer::delAll();
         
@@ -92,10 +144,8 @@ class Worker
         ));
         Helpers::eventSignalHandler($this->eventLoop, $this, 'signalHandler');
 
-        if ($daemon) Helpers::surpressOuputStream();
-
         /**
-         * /!\ Temporary fix /!\
+         * /!\ Temporary solution /!\
          * 
          * This is currently needed as the official workerman library 
          * expect to comunicate with the worker in this way.
@@ -109,7 +159,6 @@ class Worker
         Timer::init($this->eventLoop);
 
         $this->socket->resumeAccept($this);
-
         $this->eventLoop->loop();
     }
 
@@ -123,7 +172,7 @@ class Worker
      */
     public function acceptConnection($socket)
     {
-        $socket = stream_socket_accept($socket, 0, $remoteAddress);
+        $socket = @stream_socket_accept($socket, 0, $remoteAddress);
 
         // Thundering herd.
         if (false === $socket) return;
@@ -131,6 +180,8 @@ class Worker
         $this->connectionCount++;
         
         $connection = new TcpConnection($socket, $remoteAddress);
+
+        $this->connections[$connection->id] = $connection;
 
         $connection->worker = $this;
         $connection->protocol = $this->socket->getProtocol();
@@ -151,21 +202,26 @@ class Worker
      */
     public function signalHandler(int $signal): void
     {
-        Output::debug(sprintf('Worker (%d): Received signal %d', $this->id, $signal));
-
+        $this->debug('Received signal %d', [$signal]);
+        
         switch ($signal) {
+            case SIGINT:
+            case SIGTERM:
             case SIGHUP:
+            case SIGTSTP:
+            case SIGUSR1:
+                
+                $this->hardStop();
+                break;
+
+            case SIGQUIT:
+            case SIGUSR2:
                 
                 $this->gracefullStop();
                 break;
 
-            case SIGQUIT:
-            
-                $this->hardStop();
-                break;
-            
             case SIGIOT:
-        
+
                 $this->writeStatus();
                 break;
         }
@@ -179,7 +235,11 @@ class Worker
      */
     protected function stopSocket(): void
     {
-        if ($this->socket->isSocketStarted()) $this->socket->destroySocket();        
+        if ($this->socket->isSocketStarted()) $this->socket->destroySocket();
+
+        sleep(rand(1,30));
+        
+        $this->debug('Socket destroyed succesfully');
     }
 
 
@@ -188,11 +248,23 @@ class Worker
      * 
      * @return void
      */
-    public function gracefullStop(): void
+    protected function gracefullStop(): void
     {
-        $this->stopSocket();
+        if (
+            $this->socket->isSocketStarted()
+            && $this->socket->isAccepting()
+        ) $this->socket->pauseAccept();
 
-        if ($this->connections === []) exit(Workerman::EXIT_SUCCESS);
+        if ($this->connections === []) {
+
+            $this->stopSocket();
+            $this->debug('Worker exit succesfully');
+            exit(Workerman::EXIT_SUCCESS);
+        }
+
+        $this->debug('Not all connections have been closed retrying in 1 sec');
+
+        Timer::add(1, [$this, 'gracefullStop'], [], false);
     }
 
 
@@ -201,13 +273,13 @@ class Worker
      * 
      * @return void
      */
-    public function hardStop(): void
+    protected function hardStop(): void
     {
-        echo "hardstop\n";
-
         $this->stopSocket();
 
         foreach ($this->connections as $co) $co->close();
+
+        $this->debug('Worker exit succesfully');
 
         exit(Workerman::EXIT_SUCCESS);
     }
@@ -220,17 +292,26 @@ class Worker
      */
     protected function writeStatus(): void
     {
-        $memory = round(memory_get_usage() / (1024 * 1024), 2) . "M";
-        $peakMemomry = round(memory_get_peak_usage() / (1024 * 1024), 2) . "M";
+        Files::setFileContent($this->hash, [
+            'id' => $this->id,
+            'listen' => $this->socket->getAddress(),
+            'name' => $this->socket->getName(),
+            'memory' => round(memory_get_usage() / (1024 * 1024), 2) . "M",
+            'peak_memory' => round(memory_get_peak_usage() / (1024 * 1024), 2) . "M",
+            'start_time' =>  '(' . $this->restartCount . ') ' . Helpers::uptime($this->startTime),
+            'connections' => count($this->connections) . '/' . $this->connectionCount,
+            'timers' => $this->eventLoop->getTimerCount(),
+        ]);
+    }
 
-        echo json_encode(
-            [
-                'memory' => $memory,
-                'peak_memory' => $peakMemomry,
-                'connection_active' => count($this->connections),
-                'connection_total' => $this->connectionCount,
-            ],
-            JSON_PRETTY_PRINT
-        );
+
+    /**
+     * Shutdown handler.
+     * 
+     * @return void
+     */
+    public function shutdown(): void
+    {
+        Files::deleteFile($this->hash);
     }
 }

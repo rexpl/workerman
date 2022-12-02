@@ -24,7 +24,7 @@ class Files
      * 
      * @var array<string,resource>
      */
-    protected static array $lockedFiles = [];
+    protected static array $files = [];
 
 
     /**
@@ -59,7 +59,7 @@ class Files
         if (false === $file) {
 
             throw new FileHandlingException(sprintf(
-                'Could not open file %s.', static::path($path)
+                'Could not open file "%s".', static::path($path)
             ));
         }
 
@@ -94,22 +94,19 @@ class Files
     {
         $path = static::path($path);
         
-        if (!is_string($content)) {
+        $content = json_encode($content);
 
-            $content = json_encode($content);
-
-            if (false === $content) {
-
-                throw new FileHandlingException(sprintf(
-                    'Failed converting content to json when saving to file %s. Json error: %s.', $path, static::jsonError()
-                ));
-            }
-        }
-
-        if (false === file_put_contents($path, $content, LOCK_EX)) {
+        if (false === $content) {
 
             throw new FileHandlingException(sprintf(
-                'Failed to write to file %s.', $path
+                'Failed converting content to json when saving to file "%s". Json error: %s.', $path, static::jsonError()
+            ));
+        }
+
+        if (false === file_put_contents($path, $content)) {
+
+            throw new FileHandlingException(sprintf(
+                'Failed to write to file "%s".', $path
             ));
         }
     }
@@ -133,22 +130,41 @@ class Files
         if (false === $content) {
 
             throw new FileHandlingException(sprintf(
-                'Failed to read file %s.', $path
+                'Failed to read file "%s".', $path
             ));
         }
 
-        if (
-            str_starts_with($content, '{')
-            && str_ends_with($content, '}')
-        ) return $content;
-
-        $content = json_decode($content);
+        $content = json_decode($content, true);
 
         if (false !== $content) return $content;
 
         throw new FileHandlingException(sprintf(
-            'Failed to parse json content from file %s. Json error: %s.', $path, static::jsonError()
+            'Failed to parse json content from file "%s". Json error: %s.', $path, static::jsonError()
         ));
+    }
+
+
+    /**
+     * Deletes a file if it exists.
+     * 
+     * @param string $path
+     * 
+     * @return void
+     * 
+     * @throws FileHandlingException
+     */
+    public static function deleteFile(string $path): void
+    {
+        if (!static::fileExists($path)) return;
+        
+        $path = static::path($path);
+
+        if (false === unlink($path)) {
+
+            throw new FileHandlingException(sprintf(
+                'Failed to delete file %s', $path
+            ));
+        }
     }
 
 
@@ -168,11 +184,11 @@ class Files
         if (!flock($file, LOCK_EX)) {
 
             throw new FileHandlingException(sprintf(
-                'Failed to lock file %s.', static::path($path)
+                'Failed to lock file "%s".', static::path($path)
             ));
         }
 
-        static::$lockedFiles[$path] = $file;
+        static::$files[$path] = $file;
     }
 
 
@@ -194,15 +210,15 @@ class Files
             );
         }
 
-        if (!flock(static::$lockedFiles[$path], LOCK_UN)) {
+        if (!flock(static::$files[$path], LOCK_UN)) {
 
             throw new FileHandlingException(sprintf(
-                'Failed to unlock file %s.', static::path($path)
+                'Failed to unlock file "%s".', static::path($path)
             ));
         }
 
-        fclose(static::$lockedFiles[$path]);
-        unset(static::$lockedFiles[$path]);
+        fclose(static::$files[$path]);
+        unset(static::$files[$path]);
     }
 
 
@@ -215,6 +231,6 @@ class Files
      */
     public static function isLocked(string $path): bool
     {
-        return isset(static::$lockedFiles[$path]);
+        return isset(static::$files[$path]);
     }
 }

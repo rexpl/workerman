@@ -87,9 +87,38 @@ class Output
 
 
     /**
+     * Success output.
+     * 
+     * @param string|array $message
+     * 
+     * @return void
+     */
+    public static function success(string|array $message): void
+    {
+        static::output('success', $message);
+    }
+
+
+    /**
+     * Load bar.
+     * 
+     * If $start is false move the amount specified, if $start is true create new for this amount.
+     * 
+     * @param int $moveORamount 
+     * @param bool $start
+     * 
+     * @return void
+     */
+    public static function progressBar(int $moveORamount = 1, bool $start = false): void
+    {
+        foreach (static::$outputInterfaces as $handler) $handler->progressBar($moveORamount, $start);
+    }
+
+
+    /**
      * Output an exception.
      * 
-     * @param Throwable
+     * @param Throwable $throwable
      * 
      * @return void
      */
@@ -103,7 +132,7 @@ class Output
      * Send output to output handlers.
      * 
      * @param string $method
-     * @param string|array|Throwable
+     * @param string|array|Throwable $data
      * 
      * @return void
      */
@@ -133,7 +162,7 @@ class Output
      * 
      * @return void
      */
-    public static function start(): void
+    public static function daemonize(): void
     {
         static::$outputInterfaces = static::$afterStartHandler;
         static::$daemon = true;

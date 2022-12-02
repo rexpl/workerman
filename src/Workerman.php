@@ -8,8 +8,10 @@ use LogicException;
 use Rexpl\Workerman\Commands\Command;
 use Rexpl\Workerman\Exceptions\WorkermanException;
 use Rexpl\Workerman\Tools\Files;
+use Rexpl\Workerman\Tools\Helpers;
 use Rexpl\Workerman\Tools\Output;
 use Rexpl\Workerman\Tools\OutputInterface;
+use Rexpl\Workerman\Worker;
 use Symfony\Component\Console\Application;
 use Workerman\Timer;
 
@@ -20,7 +22,7 @@ class Workerman
      * 
      * @var string
      */
-    public const VERSION = '1.0';
+    public const VERSION = '0.1.0';
 
 
     /**
@@ -92,7 +94,31 @@ class Workerman
      * 
      * @var string
      */
-    public const PID_PATH = 'process.pid';
+    public const PID_FILE = 'process.pid';
+
+
+    /**
+     * Path to the status info file.
+     * 
+     * @var string
+     */
+    public const STATUS_FILE = 'status.workerman';
+
+
+    /**
+     * Path to the restart info file.
+     * 
+     * @var string
+     */
+    public const RESTART_FILE = 'restart.workerman';
+
+
+    /**
+     * Path to the shutdown info file.
+     * 
+     * @var string
+     */
+    public const SHUTDOWN_FILE = 'shutdown.workerman';
 
 
     /**
@@ -266,6 +292,22 @@ class Workerman
 
 
     /**
+     * Path to redirect STDERR.
+     * 
+     * @var string|null
+     */
+    protected static ?string $stderr = null;
+
+
+    /**
+     * Name of the master process.
+     * 
+     * @var string|null
+     */
+    protected static ?string $name = null;
+
+
+    /**
      * Operating system.
      * 
      * @var int
@@ -287,6 +329,14 @@ class Workerman
      * @var bool
      */
     protected bool $daemon;
+
+
+    /**
+     * Should stop/reload gracefully.
+     * 
+     * @var bool
+     */
+    protected bool $graceful;
 
 
     /**
@@ -312,9 +362,13 @@ class Workerman
         }
 
         Files::$rootPath = $path;
-        Output::debug(sprintf(
-            'Application path: %s', $path
-        ));
+        Output::debug(
+            [
+                sprintf('Workerman version: %s', \Workerman\Worker::VERSION),
+                sprintf('Application version: %s', self::VERSION),
+                sprintf('Work directory: %s', $path)
+            ]
+        );
 
         $this->os = DIRECTORY_SEPARATOR === '\\' ? self::WINDOWS : self::LINUX;
         Output::debug(sprintf(
@@ -340,11 +394,56 @@ class Workerman
 
 
     /**
-     * Initialize workerman.
+     * Get the status of workerman.
+     * 
+     * @return array
+     */
+    public function status(): array
+    {
+        $this->command = self::COMMAND_STATUS;
+
+        return $this->init();
+    }
+
+
+    /**
+     * Stop workerman.
+     * 
+     * @param bool $graceful
      * 
      * @return int
      */
-    protected function init(): int
+    public function stop(bool $graceful): int
+    {
+        $this->command = self::COMMAND_STOP;
+        $this->graceful = $graceful;
+
+        return $this->init();
+    }
+
+
+    /**
+     * Restart workerman.
+     * 
+     * @param bool $graceful
+     * 
+     * @return int
+     */
+    public function restart(bool $graceful): int
+    {
+        $this->command = self::COMMAND_RELOAD;
+        $this->graceful = $graceful;
+
+        return $this->init();
+    }
+
+
+    /**
+     * Initialize workerman.
+     * 
+     * @return int|array
+     */
+    protected function init(): int|array
     {
         Timer::init();
 
@@ -352,40 +451,241 @@ class Workerman
             case self::COMMAND_START:
                 
                 Output::debug('Command: start');
+                Output::debug(sprintf('Daemon: %s', $this->daemon ? 'Yes' : 'No'));
 
-                if ($this->os === self::LINUX) return $this->daemonizeIfNeeded();
+                if ($this->os === self::LINUX) return $this->startWorkerman();
 
                 //return $this->forkWorkersForWindows();
             
             case self::COMMAND_RELOAD:
 
                 Output::debug('Command: reload');
+                Output::debug(sprintf('Graceful: %s', $this->graceful ? 'Yes' : 'No'));
             
-                //return $this->sendReloadSignal();
+                return $this->restartWorkers();
 
             case self::COMMAND_STOP:
 
                 Output::debug('Command: stop');
+                Output::debug(sprintf('Graceful: %s', $this->graceful ? 'Yes' : 'No'));
             
-                //return $this->stopWorkers();
+                return $this->stopWorkers();
             
             case self::COMMAND_STATUS:
 
                 Output::debug('Command: status');
             
-                //return $this->displayStatus();
+                return $this->collectStatus();
         }
     }
 
 
     /**
-     * Daemonize if needeed.
+     * Verify workerman is running.
+     * 
+     * @return bool
+     */
+    protected function isWorkermanRunning(): bool
+    {
+        return Files::fileExists(Workerman::PID_FILE);
+    }
+
+
+    /**
+     * Return an array of hashes to identify workers in various tasks.
+     *
+     * @param string $file The file containing the hashes.
+     * 
+     * @return array
+     */
+    protected function getAllHashes(string $file): array
+    {
+        Output::debug('Collecting hash file');
+
+        while (1) {
+
+            if (Files::fileExists($file)) break;
+
+            if (!isset($ouputAlreadySent)) {
+
+                Output::debug('Waiting for hash file..');
+                $ouputAlreadySent = true;
+            }
+
+            usleep(200000);
+        }
+
+        $result = Files::getFileContent($file);
+        Files::deleteFile($file);
+
+        return $result;
+    }
+
+
+    /**
+     * --------------------------------------------------------------------------
+     * The methods below are for the start process on unix systems.
+     * --------------------------------------------------------------------------
+     * 
+     * Steps:
+     *  - We initialize all sockets
+     *  - Fork all workers
+     *  - Then initialize the master loop for monitoring
+     */
+
+
+    /**
+     * Init all sockets.
      * 
      * @return int
      */
-    protected function daemonizeIfNeeded(): int
+    protected function startWorkerman(): int
     {
+        if ($this->isWorkermanRunning()) {
+
+            throw new WorkermanException(
+                'Cannot start workerman, workerman already running.'
+            );
+        }
+
+        $this->redirectStdErr();
+        $this->setProcessName();
+        
+        if ($this->daemon) return $this->daemonize();
+
         return $this->initAllSockets();
+    }
+
+
+    /**
+     * Verify redirect STDERR to a file.
+     * 
+     * @return void
+     */
+    protected function redirectStdErr(): void
+    {
+        if (null === static::$stderr) {
+            
+            Output::warning(
+                'No file specified for error ouput (STDERR). ' .
+                'Please consider using Workerman::stdErrorPath(/path/to/error/log) to specify a file for the standard error ouput.'
+            );
+            Helpers::surpressErrorStream();
+            return;
+        }
+
+        Helpers::moveErrorStream(static::$stderr);
+    }
+
+
+    /**
+     * Set process name.
+     * 
+     * @return void
+     */
+    protected function setProcessName(): void
+    {
+        if (null === static::$name) {
+            
+            Output::warning([
+                'No name specified, master process will be named "Workerman master".',
+                'To change the process name use Workerman::setName(process name)'
+            ]);
+        }
+
+        Helpers::setProcessTitle(static::$name ?? 'Workerman master');
+    }
+
+
+    /**
+     * Daemonize the process.
+     * 
+     * @return int
+     */
+    protected function daemonize(): int
+    {
+        Output::debug('Detaching process from terminal');
+
+        $pid = pcntl_fork();
+
+        switch ($pid) {
+            case 0:
+                
+                return $this->makeSessionLeader();
+
+            case -1:
+
+                throw new WorkermanException(
+                    'Fork failed while trying to detach process from terminal.'
+                );
+            
+            default:
+                
+                return $this->verifyStartSuccess();
+        }
+    }
+
+
+    /**
+     * Make the current process master.
+     * 
+     * @return int
+     */
+    protected function makeSessionLeader(): int
+    {
+        if (-1 === posix_setsid()) {
+
+            throw new WorkermanException(
+                'Failed ro make the current process a session leader.'
+            );
+        }
+
+        Output::daemonize();
+        Helpers::surpressOuputStream();
+
+        $pid = pcntl_fork();
+
+        switch ($pid) {
+            case 0:
+                
+                return $this->initAllSockets();
+
+            case -1:
+
+                throw new WorkermanException(
+                    'Second fork failed while trying to detach process from terminal.'
+                );
+            
+            default:
+                
+                return self::EXIT_SUCCESS;
+        }
+    }
+
+
+    /**
+     * Verify that the daemon started successfully.
+     * 
+     * @return int
+     */
+    protected function verifyStartSuccess(): int
+    {
+        Output::debug('Daemonized succesfully, verifying workerman is started');
+
+        $i = 0;
+
+        while ($i <= 10) {
+            
+            usleep(500000);
+
+            if (!$this->isWorkermanRunning()) continue;
+
+            Output::debug('Succesfully started workerman daemon');
+
+            return self::EXIT_SUCCESS;
+        }
+
+        return self::EXIT_FAILURE;
     }
 
 
@@ -493,22 +793,273 @@ class Workerman
      */
     protected function monitorWorkers(): int
     {
-        $message = ['Succesfully started workerman.'];
-
-        foreach (Socket::allSockets() as $socket) {
-            
-            $message[] = sprintf(
-                '(%s) listening on %s with %d worker(s).',
-                $socket->getName() === $socket->getAddress() ? 'unnamed' : $socket->getName(),
-                $socket->getAddress(),
-                $socket->getWorkerCount()
-            );
-            
-        }
-
-        Output::info($message);
+        Output::success('Succesfully started workerman');
 
         return (new Master($this->workers))->start($this->daemon);
+    }
+
+
+    /**
+     * --------------------------------------------------------------------------
+     * The methods below are for stopping/restarting workerman on unix systems.
+     * --------------------------------------------------------------------------
+     * 
+     * Steps:
+     *  - Send stop/reload signal to master process.
+     *  - If graceful = true, create a file for each worker sich the worker will delete on shutdown
+     *    this allows us to display progress bar
+     *  - Verfy the process.pid file isn't there anymore
+     */
+
+
+    /**
+     * Send stop signal to master process.
+     *
+     * @return int
+     */
+    protected function stopWorkers(): int
+    {
+        if (!$this->isWorkermanRunning()) {
+
+            throw new WorkermanException(
+                'Cannot stop workerman, workerman is not running.'
+            );
+        }
+
+        $pid = Files::getFileContent(Workerman::PID_FILE);
+
+        Output::debug(sprintf(
+            'Sending stop signal (%s) to master process', $this->graceful ? 'SIGQUIT' : 'SIGINT'
+        ));
+
+        if (false === posix_kill($pid, $this->graceful ? SIGQUIT : SIGINT)) {
+
+            throw new WorkermanException(
+                'Failed to send status signal to master process.'
+            );
+        }
+
+        if ($this->graceful) $this->verifyAllWorkersAreShutdown();
+
+        return $this->verifyMasterIsShutdown();
+    }
+
+
+    /**
+     * Send reload signal to master process.
+     * 
+     * @return int
+     */
+    protected function restartWorkers(): int
+    {
+        if (!$this->isWorkermanRunning()) {
+
+            throw new WorkermanException(
+                'Cannot restart workerman, workerman is not running.'
+            );
+        }
+
+        $start = time();
+        $pid = Files::getFileContent(Workerman::PID_FILE);
+
+        Output::debug(sprintf(
+            'Sending restart signal (%s) to master process', $this->graceful ? 'SIGUSR2' : 'SIGUSR1'
+        ));
+
+        if (false === posix_kill($pid, $this->graceful ? SIGUSR2 : SIGUSR1)) {
+
+            throw new WorkermanException(
+                'Failed to send status signal to master process.'
+            );
+        }
+
+        if ($this->graceful) $this->verifyAllWorkersAreShutdown();
+
+        return $this->verifyMasterConfirmReload($start);
+    }
+
+
+    /**
+     * Verify that all the workers are shutdown.
+     * 
+     * @return void
+     */
+    protected function verifyAllWorkersAreShutdown(): void
+    {
+        $result = 0;
+        $hashes = $this->getAllHashes(Workerman::SHUTDOWN_FILE);
+        $workerCount = count($hashes);
+
+        Output::debug('Waiting for all workers to shutdown..');
+
+        /**
+         * We create empty shutdown actions for workers to delete.
+         */
+        foreach ($hashes as $hash) Files::setFileContent($hash, 'shutdown_action');
+
+        Output::progressBar($workerCount, true);
+
+        while (1) {
+
+            $new = false;
+
+            /**
+             * Workers are required to delete any hash before shutting down
+             * The file doesn't exist = the worker is shutdown
+             * This allows us to display a user friendly progress bar to keep the user updated
+             */
+            foreach ($hashes as $key => $hash) {
+                
+                if (Files::fileExists($hash)) continue;
+
+                $new = $key;
+                break;
+            }
+
+            // if all files still exist no workers have shutdown
+            if (false === $new) {
+
+                usleep(500000);
+                continue;
+            }
+
+            Output::progressBar();
+            unset($hashes[$new]);
+
+            if (++$result === $workerCount) break;
+        }
+    }
+
+
+    /**
+     * Verify the master is shutdown.
+     * 
+     * @return int
+     */
+    protected function verifyMasterIsShutdown(): int
+    {
+        Output::debug('Waiting for master process to confirm the shutdown..');
+
+        while (Files::fileExists(Workerman::PID_FILE)) {
+            
+            usleep(500000);
+        }
+
+        Output::success('Succesfully stopped workerman');
+
+        return self::EXIT_SUCCESS;
+    }
+
+
+    /**
+     * Verify that the master process confirmed the reload.
+     * 
+     * @param int $start
+     * 
+     * @return int
+     */
+    protected function verifyMasterConfirmReload(int $start): int
+    {
+        Output::debug('Waiting for master process to confirm the reload..');
+
+        while (!Files::fileExists(Workerman::RESTART_FILE)) {
+            
+            usleep(500000);
+        }
+
+        $lastReloadTime = Files::getFileContent(Workerman::RESTART_FILE);
+        Files::deleteFile(Workerman::RESTART_FILE);
+
+        if ($start < $lastReloadTime) {
+
+            Output::success('Succesfully restarted workerman');
+            return self::EXIT_SUCCESS;
+        }
+
+        Output::error([
+            'Unexpected error encountered while restarting workerman.',
+            'The reload signal was sent after the master confirmed the reload.'
+        ]);
+        return self::EXIT_FAILURE;
+    }
+
+
+    /**
+     * --------------------------------------------------------------------------
+     * The methods below are for collecting the status on unix systems.
+     * --------------------------------------------------------------------------
+     * 
+     * Steps:
+     *  - Send status signal to master process
+     *  - Read status file to get all worker hashes (i.e the path wo wich each process will write it's status data)
+     *  - Return an array with all status data
+     */
+
+    
+    /**
+     * Collect the status of each worker.
+     * 
+     * @return array
+     */
+    protected function collectStatus(): array
+    {
+        if (!$this->isWorkermanRunning()) {
+
+            throw new WorkermanException(
+                'Cannot collect worker status, workerman is not running.'
+            );
+        }
+
+        $pid = Files::getFileContent(Workerman::PID_FILE);
+
+        if (false === posix_kill($pid, SIGIOT)) {
+
+            throw new WorkermanException(
+                'Failed to send status signal to master process.'
+            );
+        }
+
+        return $this->returnStatusResults();
+    }
+
+
+    protected function returnStatusResults(): array
+    {
+        $result = [];
+        $workersHash = $this->getAllHashes(Workerman::STATUS_FILE);
+        $workerCount = count($workersHash);
+
+        Output::progressBar($workerCount, true);
+
+        while (1) {
+
+            $new = false;
+
+            // See if a new status file is available
+            foreach ($workersHash as $hash) {
+                
+                if (!Files::fileExists($hash)) continue;
+
+                $new = $hash;
+                break;
+            }
+
+            // if none available we wait a little bit before retrying
+            if (false === $new) {
+
+                usleep(500000);
+                continue;
+            }
+
+            Output::progressBar();
+
+            $result[] = Files::getFileContent($new);
+            Files::deleteFile($new);
+
+            if (count($result) === $workerCount) break;
+        }
+
+        return $result;
     }
 
 
@@ -517,6 +1068,32 @@ class Workerman
      * The methods below are made to start & configure the workerman environment.
      * --------------------------------------------------------------------------
      */
+
+
+    /**
+     * Set the master process name.
+     * 
+     * @param string $name
+     * 
+     * @return void
+     */
+    public static function setName(string $name): void
+    {
+        static::$name = $name;
+    }
+
+
+    /**
+     * Set the path to STDERR.
+     * 
+     * @param string $path
+     * 
+     * @return void
+     */
+    public static function stdErrorPath(string $path): void
+    {
+        static::$stderr = $path;
+    }
 
 
     /**

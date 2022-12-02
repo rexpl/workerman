@@ -4,18 +4,30 @@ declare(strict_types=1);
 
 namespace Rexpl\Workerman\Tools;
 
+use Symfony\Component\Console\Cursor;
+use Symfony\Component\Console\Helper\ProgressBar;
 use Throwable;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
 class SymfonyOutput implements OutputInterface
 {
     /**
-     * @param SymfonyStyle
+     * Progress bar.
+     * 
+     * @var ProgressBar
+     */
+    protected ProgressBar $progressBar;
+
+
+    /**
+     * @param SymfonyStyle $output
+     * @param Cursor $cursor
      * 
      * @return void
      */
     public function __construct(
-        protected SymfonyStyle $ouput
+        protected SymfonyStyle $output,
+        protected Cursor $cursor
     ) {}
 
 
@@ -28,7 +40,8 @@ class SymfonyOutput implements OutputInterface
      */
     public function error(string|array $message): void
     {
-        $this->ouput->error($message);
+        $this->cursor->moveToColumn(0);
+        $this->output->error($message);
     }
 
 
@@ -41,7 +54,8 @@ class SymfonyOutput implements OutputInterface
      */
     public function warning(string|array $message): void
     {
-        $this->ouput->warning($message);
+        $this->cursor->moveToColumn(0);
+        $this->output->warning($message);
     }
 
 
@@ -54,7 +68,8 @@ class SymfonyOutput implements OutputInterface
      */
     public function info(string|array $message): void
     {
-        $this->ouput->info($message);
+        $this->cursor->moveToColumn(0);
+        $this->output->info($message);
     }
 
 
@@ -67,23 +82,69 @@ class SymfonyOutput implements OutputInterface
      */
     public function debug(string|array $message): void
     {
-        if ($this->ouput->isVerbose()) $this->ouput->writeln($message);
+        if (!$this->output->isVerbose()) return;
+        
+        $this->cursor->moveToColumn(0);
+        $this->output->writeln($message);
+    }
+
+
+    /**
+     * Success output.
+     * 
+     * @param string|array $message
+     * 
+     * @return void
+     */
+    public function success(string|array $message): void
+    {
+        $this->cursor->moveToColumn(0);
+        $this->output->success($message);
+    }
+
+
+    /**
+     * Load bar.
+     * 
+     * If $start is false move the amount specified, if $start is true create new for this amount.
+     * 
+     * @param int $moveORamount 
+     * @param bool $start
+     * 
+     * @return void
+     */
+    public function progressBar(int $moveORamount = 1, bool $start = false): void
+    {
+        if (!$start) {
+           
+            $this->progressBar->advance($moveORamount);
+
+            if (
+                $this->progressBar->getMaxSteps() === $this->progressBar->getProgress()
+            ) $this->output->newLine(2);
+
+            return;
+        }
+
+        $this->output->newLine(1);
+        $this->progressBar = $this->output->createProgressBar($moveORamount);
+        $this->progressBar->display();
     }
 
 
     /**
      * Output an exception.
      * 
-     * @param Throwable
+     * @param Throwable $th
      * 
      * @return void
      */
     public function exception(Throwable $th): void
     {
-        $this->ouput->block([
-            sprintf(
-                '%s: %s in %s:%s', get_class($th), $th->getMessage(), $th->getFile(), $th->getLine()
-            ),
+        $this->cursor->moveToColumn(0);
+        $this->output->block([
+            sprintf('%s: %s', get_class($th), $th->getMessage()),
+            sprintf('Thrown in %s:%s', $th->getFile(), $th->getLine()),
             $th->getTraceAsString()
         ]);
     }

@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace Rexpl\Workerman\Commands;
 
+use Rexpl\Workerman\Exceptions\WorkermanException;
+use Rexpl\Workerman\Tools\Output;
+use Rexpl\Workerman\Workerman;
 use Symfony\Component\Console\Input\InputOption;
+use Throwable;
 
 class Reload extends Command
 {
@@ -18,8 +22,7 @@ class Reload extends Command
         $this->setName('restart')
             ->setDescription('Restart workerman')
             ->setHelp('Restart the workerman application. The graceful option will wait that all connections are closed before restarting.')
-            ->addOption('graceful', 'g', InputOption::VALUE_OPTIONAL, 'Restart workerman gracefully.')
-            ->addOption('timeout', 't', InputOption::VALUE_OPTIONAL, 'Time in seconds to wait before forcing workerman to restart.');
+            ->addOption('graceful', 'g', InputOption::VALUE_NONE, 'Stop workerman gracefully.');
     }
 
 
@@ -30,6 +33,19 @@ class Reload extends Command
      */
     protected function executeCommand(): int
     {
-        return 0;
+        try {
+
+            return (new Workerman(static::$path))->restart($this->input->getOption('graceful'));
+
+        } catch (WorkermanException $e) {
+
+            $this->symfonyStyle->error($e->getMessage());
+
+        } catch (Throwable $th) {
+
+            Output::exception($th);
+        }
+        
+        return self::FAILURE;
     }   
 }

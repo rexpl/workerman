@@ -18,6 +18,7 @@ use Rexpl\Workerman\Handler\ObjectHandler;
 use Rexpl\Workerman\Tools\Helpers;
 use Workerman\Events\EventInterface;
 use Workerman\Connection\ConnectionInterface;
+use Workerman\Protocols\ProtocolInterface;
 
 class Socket
 {
@@ -439,7 +440,7 @@ class Socket
     /**
      * Set the event loop.
      * 
-     * @param EventInterface
+     * @param EventInterface $eventLoop
      * 
      * @return static
      */
@@ -519,8 +520,6 @@ class Socket
      */
     public function addObject(object|string $class, ?int $constructor = null): static
     {
-        $this->hasHandler = true;
-
         if (is_object($class)) return $this->addHandler(new ObjectHandler($class));
 
         $this->verifyEventExists($constructor);

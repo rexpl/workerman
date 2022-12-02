@@ -7,6 +7,7 @@ namespace Rexpl\Workerman\Commands;
 use Rexpl\Workerman\Tools\SymfonyOutput;
 use Rexpl\Workerman\Workerman;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
+use Symfony\Component\Console\Cursor;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
@@ -46,8 +47,9 @@ abstract class Command extends SymfonyCommand
     {
         $this->input = $input;
         $this->symfonyStyle = new SymfonyStyle($input, $output);
+        $cursor = new Cursor($output);
 
-        Workerman::addOutput(new SymfonyOutput($this->symfonyStyle));
+        Workerman::addOutput(new SymfonyOutput($this->symfonyStyle, $cursor));
 
         return $this->executeCommand();
     }

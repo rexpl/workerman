@@ -45,6 +45,22 @@ class ClassHandler extends Handler
 
 
     /**
+     * Marks whether this object has a method.
+     * 
+     * @var array<int,bool>
+     */
+    protected array $has = [];
+
+
+    /**
+     * All present methods.
+     * 
+     * @var array<int,string>
+     */
+    protected array $methods;
+
+
+    /**
      * @param string $class
      * 
      * @return void
@@ -69,6 +85,7 @@ class ClassHandler extends Handler
     {
         $this->constructor = $constructor;
         $this->isConstructorConnectionRelated = $this->isConnectionRelated($constructor);
+        $this->has[$constructor] = true;
     }
 
 
@@ -96,7 +113,7 @@ class ClassHandler extends Handler
 
             if ($key === $this->constructor) continue;
 
-            $this->has[$key] = method_exists($this->object, $method);
+            $this->has[$key] = method_exists($this->class, $method);
             
             if ($this->has[$key]) $this->methods[$key] = $method;
         }

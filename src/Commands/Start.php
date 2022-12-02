@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Rexpl\Workerman\Commands;
 
 use Rexpl\Workerman\Exceptions\WorkermanException;
+use Rexpl\Workerman\Tools\Output;
 use Rexpl\Workerman\Workerman;
 use Symfony\Component\Console\Input\InputOption;
 use Throwable;
@@ -21,7 +22,7 @@ class Start extends Command
         $this->setName('start')
             ->setDescription('Start workerman')
             ->setHelp('Start the workerman application.')
-            ->addOption('daemon', 'd', InputOption::VALUE_OPTIONAL, 'Start workerman in daemon mode.');
+            ->addOption('daemon', 'd', InputOption::VALUE_NONE, 'Start workerman in daemon mode (unix systems only).');
     }
 
 
@@ -33,8 +34,8 @@ class Start extends Command
     protected function executeCommand(): int
     {
         try {
-            
-            return (new Workerman(static::$path))->start($this->input->getOption('daemon') !== null);
+
+            return (new Workerman(static::$path))->start($this->input->getOption('daemon'));
 
         } catch (WorkermanException $e) {
 
@@ -42,12 +43,7 @@ class Start extends Command
 
         } catch (Throwable $th) {
 
-            $this->symfonyStyle->block([
-                sprintf('%s: %s', get_class($th), $th->getMessage()),
-                sprintf('Thrown in %s:%s', $th->getFile(), $th->getLine()),
-                $th->getTraceAsString()
-            ]);
-
+            Output::exception($th);
         }
         
         return self::FAILURE;
