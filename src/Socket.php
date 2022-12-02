@@ -260,7 +260,7 @@ class Socket
     {
         if (
             !class_exists($protocol)
-            || !in_array($protocol, class_implements(ProtocolInterface::class))
+            || !in_array(ProtocolInterface::class, class_implements($protocol))
         ) {
             throw new ProtocolException(sprintf(
                 'Class %s does not implement %s.', $protocol, ProtocolInterface::class

@@ -236,8 +236,6 @@ class Worker
     protected function stopSocket(): void
     {
         if ($this->socket->isSocketStarted()) $this->socket->destroySocket();
-
-        sleep(rand(1,30));
         
         $this->debug('Socket destroyed succesfully');
     }
