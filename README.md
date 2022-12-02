@@ -69,6 +69,32 @@ $daemon = false;
 // or (new Workerman($path))->restart();
 ```
 
+Fully working http server exemple:
+
+```php
+<?php
+
+use Rexpl\Workerman\Workerman;
+
+require_once 'vendor/autoload.php';
+
+class MyClass
+{
+    public function onConnect($connection) {}
+
+    public function onMessage($connection, $request) {}
+}
+
+Workerman::newHttpServer('0.0.0.0:8080')
+    ->setWorkerCount(4)
+    ->setName('Web server')
+    ->addObject(new MyClass());
+
+Workerman::stdErrorPath(__DIR__.'/error.log');
+Workerman::setName('Workerman');
+Workerman::symfonyConsole(__DIR__. '/tmp')->run();
+
+```
 
 ## LICENSE
 
