@@ -1,7 +1,4 @@
-logs
-.buildpath
-.project
-.settings
-.idea
-.DS_Store
+/.vscode
 /vendor
+/tmp
+composer.lock
