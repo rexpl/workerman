@@ -340,6 +340,14 @@ class Workerman
 
 
     /**
+     * Worker ID pointer.
+     * 
+     * @var int
+     */
+    protected int $workerID = 0;
+
+
+    /**
      * All workers.
      * 
      * @var array<int,Worker>
@@ -745,7 +753,9 @@ class Workerman
     {
         Output::debug(sprintf('(%s) Forking workers', $socket->getName()));
 
-        foreach (range(1, $socket->getWorkerCount()) as $id) {
+        $this->workerID++;
+
+        foreach (range($this->workerID, $this->workerID + $socket->getWorkerCount()) as $id) {
             
             $worker = new Worker($socket, $id);
 
@@ -762,6 +772,7 @@ class Workerman
                     throw new WorkermanException(
                         'Fork worker failed.'
                     );
+                    // no break
                 
                 default:
                     
@@ -769,6 +780,8 @@ class Workerman
                     break;
             }
         }
+
+        $this->workerID += $socket->getWorkerCount();
     }
 
 
