@@ -49,9 +49,9 @@ class Socket
     /**
      * The application layer protocol being used.
      * 
-     * @var string
+     * @var string|null
      */
-    protected string $protocol;
+    protected ?string $protocol = null;
 
 
     /**
