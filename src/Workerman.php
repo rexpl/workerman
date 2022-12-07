@@ -597,11 +597,11 @@ class Workerman
             
             Output::warning([
                 'No name specified, master process will be named "Workerman master".',
-                'To change the process name use Workerman::setName(process name)'
+                'To change the process name use Workerman::setName(name)'
             ]);
         }
 
-        Helpers::setProcessTitle(static::$name ?? 'Workerman master');
+        Helpers::setProcessTitle((static::$name ?? 'Workerman') . ' master');
     }
 
 
