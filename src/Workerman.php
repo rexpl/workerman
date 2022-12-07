@@ -678,20 +678,24 @@ class Workerman
      */
     protected function verifyStartSuccess(): int
     {
-        Output::debug('Daemonized succesfully, verifying workerman is started');
+        Output::debug('Succesfully detached master, verifying workerman is started');
 
         $i = 0;
 
         while ($i <= 10) {
+
+            $i++;
             
             usleep(500000);
 
             if (!$this->isWorkermanRunning()) continue;
 
-            Output::debug('Succesfully started workerman daemon');
+            Output::success('Succesfully started workerman in detached mode');
 
             return self::EXIT_SUCCESS;
         }
+
+        Output::error('Failed to start workerman in detached mode');
 
         return self::EXIT_FAILURE;
     }
