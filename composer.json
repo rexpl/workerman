@@ -10,5 +10,11 @@
     "require": {
         "symfony/console": "^6.1",
         "workerman/workerman": "^4.1"
+    },
+    "bin": [
+        "bin/workerman"
+    ],
+    "config": {
+        "bin-dir": "./"
     }
 }
